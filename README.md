@@ -137,7 +137,7 @@ fi
 - Dashboard: https://app.vibekit.bot  
 - API Docs: https://vibekit.bot/SKILL.md
 - Telegram Bot: @the_vibe_kit_bot
-- GitHub: https://github.com/609NFT/vibekit
+- GitHub: https://github.com/VibeKit-Bot/vibekit-cli
 
 ## License
 
