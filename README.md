@@ -134,7 +134,7 @@ fi
 ## Links
 
 - Website: https://vibekit.bot
-- Dashboard: https://app.vibekit.bot/?ref=github_cli  
+- Dashboard: https://app.vibekit.bot  
 - API Docs: https://vibekit.bot/SKILL.md
 - Telegram Bot: @the_vibe_kit_bot
 - GitHub: https://github.com/VibeKit-Bot/vibekit-cli
