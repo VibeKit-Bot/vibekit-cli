@@ -1,76 +1,85 @@
 # vibekit
 
-Deploy apps from your terminal. Built for AI coding agents.
+Build, deploy and schedule work on VibeKit-hosted apps from your terminal. Built for AI coding agents.
 
 ## Install + Auth
 
 ```bash
 npm install -g vibekit-cli
-vibekit auth $VIBEKIT_API_KEY
-
-# Or connect a provider interactively
-vibekit auth login anthropic
+vibekit auth $VIBEKIT_API_KEY   # or just `vibekit auth` to paste it
 ```
 
-## Modes
+The CLI authenticates with your VibeKit API key, read from `VIBEKIT_API_KEY` first, then from
+`~/.vibekit/config.json` (where `vibekit auth` saves it). Find the key in the VibeKit app under
+Profile > Developer > API key (iOS) or Profile > VibeKit API key (app.vibekit.bot).
 
-- **Cloud mode**: use `vibekit-cli` to submit tasks, deploy apps, and manage VibeKit-hosted workloads.
-- **Local bridge mode**: use `vibekit-agent` if you want Telegram to control Claude Code on your own computer.
-
-`vibekit-cli` does **not** run Claude Code on your local machine by itself. For that, install `vibekit-agent`.
+There is no browser sign-in and no logout command. To sign out, delete `~/.vibekit/config.json`
+or regenerate the key in the app. A Claude or OpenAI key or subscription is connected in the app
+(Profile > Bring your own AI provider (BYOK) on iOS, Settings > AI on the web);
+`vibekit auth status` shows whether one is connected.
 
 ## Agent Workflow
 
-The canonical "I just built something, now deploy it":
+The canonical "build it and put it online":
 
 ```bash
-# After building your app locally
 vibekit auth $VIBEKIT_API_KEY
-vibekit task "Deploy this app" --repo owner/repo
-vibekit wait $TASK_ID --json
-# Returns: {"deployUrl": "https://app.vibekit.bot", ...}
+vibekit task "Build a landing page with email signup" --json
+# {"taskId":"task_abc123","status":"running",...}
+vibekit wait task_abc123 --json
+# {"taskId":"task_abc123","status":"complete","result":{"summary":"...","commitUrl":"https://github.com/vibekit-apps/...","deployUrl":"https://<name>.vibekit.bot"}}
 ```
+
+A task without `--repo` creates a new project (a repo under `vibekit-apps`) and deploys it.
+Pass `--repo vibekit-apps/<name>` to change one of your existing projects.
 
 ## All Commands
 
 | Command | Description |
 |---------|-------------|
-| `vibekit auth <key>` | Save API key |
-| `vibekit auth login [anthropic|openai|key]` | Interactive auth flow |
-| `vibekit auth status` | Show saved auth + provider status |
+| `vibekit auth` | Paste and save your API key |
+| `vibekit auth <vk_key>` | Save an API key |
+| `vibekit auth status` | Show the key in use, plan and connected providers |
 | `vibekit account` | Plan & usage info |
-| `vibekit task "<prompt>"` | Submit deployment task |
+| `vibekit task "<prompt>"` | Build or change a project, then deploy it |
 | `vibekit status <id>` | Check task status |
 | `vibekit wait <id>` | Wait for completion |
 | `vibekit tasks` | List recent tasks |
-| `vibekit schedule "<prompt>"` | Create recurring task |
+| `vibekit schedule "<prompt>"` | Run a prompt on a deployed project's agent on a schedule |
 | `vibekit schedules` | List scheduled tasks |
 | `vibekit unschedule <id>` | Cancel schedule |
 
-### Task Flags
+### Flags
 
 | Flag | Description |
 |------|-------------|
-| `--repo owner/name` | Target GitHub repo |
+| `--repo owner/name` | One of your projects (`vibekit-apps/<name>`) |
 | `--branch name` | Branch (default: main) |
-| `--no-deploy` | Skip auto-deploy |
-| `--callback <url>` | Webhook URL for completion |
-| `--every interval` | For schedules: hourly, daily, weekly |
+| `--no-deploy` | Task: commit without deploying. Schedule: runs do not deploy |
+| `--callback <url>` | HTTPS webhook URL for task completion |
+| `--every interval` | Schedule: hourly, daily, weekly, or a cron expression in UTC (default: daily) |
+
+### Schedules
+
+`vibekit schedule` needs a paid plan and the repo of a project you deployed. Each run is the
+project's own agent working in its workspace, billed like a chat message; its report is posted
+in the project's chat in the VibeKit app and sent as a notification. `daily` is 9:00 UTC,
+`weekly` is Monday 9:00 UTC, and runs are at most every 15 minutes.
 
 ### Examples
 
 ```bash
-# Deploy specific repo
-vibekit task "Add dark mode" --repo myorg/website
+# Change an existing project
+vibekit task "Add dark mode" --repo vibekit-apps/my-site
 
-# Deploy without auto-hosting  
-vibekit task "Fix the auth bug" --repo myorg/api --no-deploy
+# Commit without deploying
+vibekit task "Fix the auth bug" --repo vibekit-apps/my-api --no-deploy
 
 # With webhook callback
 vibekit task "Build landing page" --callback https://myserver.com/done
 
-# Recurring deployment
-vibekit schedule "Deploy latest changes" --repo myorg/app --every daily
+# Every Monday at 9:00 UTC
+vibekit schedule "Check for broken links and fix them" --repo vibekit-apps/my-site --every "0 9 * * 1"
 ```
 
 ## JSON Mode
@@ -78,20 +87,15 @@ vibekit schedule "Deploy latest changes" --repo myorg/app --every daily
 Add `--json` to any command for machine-readable output:
 
 ```bash
-vibekit task "Fix login bug" --repo myorg/app --json
-# {"taskId":"task_abc123","status":"running","repo":"vibekit-apps/project-abc123"}
-
-vibekit wait task_abc123 --json
-# {"status":"complete","result":{"deployUrl":"https://app.vibekit.bot","summary":"Fixed login validation..."}}
+vibekit status task_abc123 --json
+# {"taskId":"task_abc123","status":"running","startedAt":"...","stage":"generate","stageMessage":"Generating code with AI..."}
 
 vibekit account --json
-# {"plan":"builder","credits":15.42,"usage":{"sessions":23,"appsCreated":3}}
+# {"plan":"builder","credits":15.42,...}
 
-vibekit status task_abc123 --json  
-# {"taskId":"task_abc123","status":"running","progress":"Installing dependencies..."}
+vibekit schedules --json
+# {"schedules":[{"scheduleId":"...","name":"...","repo":"vibekit-apps/my-site","interval":"0 9 * * 1","enabled":true,"nextRun":"...","runCount":3}]}
 ```
-
-All commands support `--json` for automation and parsing.
 
 ## Environment Variables
 
@@ -103,7 +107,7 @@ Set in your environment or CI/CD pipeline:
 
 ```bash
 export VIBEKIT_API_KEY=vk_your_key_here
-vibekit task "Deploy to production" --repo owner/repo --json
+vibekit task "Update the pricing section" --repo vibekit-apps/my-site --json
 ```
 
 ## Exit Codes
@@ -112,16 +116,16 @@ vibekit task "Deploy to production" --repo owner/repo --json
 |------|---------|
 | 0 | Success |
 | 1 | Task failed or general error |
-| 10 | Not authenticated (missing/invalid API key) |
-| 40 | API error (rate limit, invalid request) |
+| 10 | Not authenticated (no API key) |
+| 40 | API error (invalid key, rate limit, invalid request) |
 
 Use exit codes for error handling in scripts:
 
 ```bash
-if vibekit task "Deploy app" --repo owner/repo --json; then
-  echo "Deployment started successfully"
+if vibekit task "Add a contact form" --repo vibekit-apps/my-site --json; then
+  echo "Task started"
 else
-  echo "Failed to start deployment"
+  echo "Failed to start the task"
   exit 1
 fi
 ```
@@ -129,14 +133,12 @@ fi
 ## Related Packages
 
 - `vibekit-mcp`: MCP access to VibeKit cloud from Claude Desktop, Cursor, and other MCP clients
-- `vibekit-agent`: Telegram bridge for controlling local Claude Code on your own machine
 
 ## Links
 
 - Website: https://vibekit.bot
-- Dashboard: https://app.vibekit.bot  
+- Dashboard: https://app.vibekit.bot
 - API Docs: https://vibekit.bot/SKILL.md
-- Telegram Bot: @the_vibe_kit_bot
 - GitHub: https://github.com/VibeKit-Bot/vibekit-cli
 
 ## License

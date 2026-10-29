@@ -1,6 +1,6 @@
 {
   "name": "vibekit-cli",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Deploy apps from your terminal. Built for AI coding agents. One command to production.",
   "bin": {
     "vibekit": "./dist/cli.js"

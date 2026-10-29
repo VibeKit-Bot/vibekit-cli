@@ -101,96 +101,50 @@ function success(msg: string): void {
 
 // ---- Commands ----
 
+// Where a Claude or OpenAI key or subscription is connected: the app, not this CLI.
+const PROVIDER_SETTINGS = 'Profile > Bring your own AI provider (BYOK) in the iOS app, or Settings > AI on app.vibekit.bot';
+const KEY_SETTINGS = 'Profile > Developer > API key in the iOS app, or Profile > VibeKit API key on app.vibekit.bot';
+
+async function saveKey(key: string): Promise<void> {
+  if (!key.startsWith('vk_')) { error('VibeKit API keys start with vk_'); process.exit(1); }
+  saveConfig({ ...loadConfig(), apiKey: key });
+  success(`API key saved to ${CONFIG_FILE}`);
+}
+
 async function cmdAuth(args: string[]): Promise<void> {
   const subCmd = args[0];
 
-  // vibekit auth <api-key> — legacy: save API key directly
-  if (subCmd && subCmd.startsWith('vk_')) {
-    saveConfig({ ...loadConfig(), apiKey: subCmd });
-    success(`API key saved to ${CONFIG_FILE}`);
-    return;
-  }
-
-  // vibekit auth login — interactive provider OAuth
-  if (subCmd === 'login' || !subCmd) {
-    const provider = args[1] || await promptProvider();
-    
-    if (provider === 'anthropic' || provider === 'claude') {
-      await authWithProvider('anthropic');
-    } else if (provider === 'openai' || provider === 'codex') {
-      await authWithProvider('openai');
-    } else if (provider === 'key') {
-      console.log('\n  Paste your VibeKit API key:');
-      const key = await readLine('  > ');
-      if (!key.startsWith('vk_')) { error('Keys start with vk_'); process.exit(1); }
-      saveConfig({ ...loadConfig(), apiKey: key });
-      success(`API key saved to ${CONFIG_FILE}`);
-    } else {
-      error(`Unknown provider: ${provider}. Use: anthropic, openai, or key`);
-      process.exit(1);
-    }
-    return;
-  }
+  // vibekit auth <api-key>
+  if (subCmd && subCmd.startsWith('vk_')) return saveKey(subCmd);
 
   // vibekit auth status
   if (subCmd === 'status') {
-    const config = loadConfig();
-    if (!config.apiKey) { console.log('  Not authenticated. Run: vibekit auth'); return; }
+    const source = process.env.VIBEKIT_API_KEY ? 'VIBEKIT_API_KEY' : loadConfig().apiKey ? CONFIG_FILE : null;
+    if (!source) { console.log('  Not authenticated. Run: vibekit auth'); return; }
     try {
       const data = await api('GET', '/account');
-      console.log(`  Authenticated as: ${data.githubUsername || data.telegramId || 'unknown'}`);
+      console.log(`  Authenticated with the API key from ${source}`);
       console.log(`  Plan: ${data.plan}`);
-      console.log(`  Claude: ${data.claudeKeySet || data.hasClaudeKey ? '✓ Connected' : '✗ Not connected'}`);
+      console.log(`  Claude: ${data.hasClaudeKey ? '✓ Connected' : '✗ Not connected'}`);
       console.log(`  OpenAI: ${data.hasOpenaiKey ? '✓ Connected' : '✗ Not connected'}`);
     } catch { console.log('  API key saved but could not reach server.'); }
     return;
   }
 
-  error('Usage: vibekit auth [login|status] [anthropic|openai|key]');
-}
+  // vibekit auth, or vibekit auth login [key]: paste the key from the app.
+  if (!subCmd || (subCmd === 'login' && (!args[1] || args[1] === 'key'))) {
+    console.log(`\n  Paste your VibeKit API key (${KEY_SETTINGS}):`);
+    return saveKey(await readLine('  > '));
+  }
 
-async function authWithProvider(provider: 'anthropic' | 'openai'): Promise<void> {
-  const config = loadConfig();
-  if (!config.apiKey) {
-    error('Set your VibeKit API key first: vibekit auth <vk_key>');
-    error('Get one at https://app.vibekit.bot or create one with POST https://vibekit.bot/api/v1/auth/register');
+  // Before 0.4.7 this tried a browser sign-in with Anthropic or OpenAI, which never worked.
+  if (subCmd === 'login') {
+    error(`Connect a Claude or OpenAI key or subscription in the VibeKit app: ${PROVIDER_SETTINGS}. Then run: vibekit auth status`);
     process.exit(1);
   }
 
-  const { loginAnthropic, loginOpenAI } = await import('./auth-oauth');
-
-  console.log(`\n  Connecting ${provider === 'anthropic' ? 'Anthropic / Claude' : 'OpenAI / Codex'}...`);
-
-  const result = provider === 'anthropic' ? await loginAnthropic() : await loginOpenAI();
-
-  // Send token to VibeKit API
-  const endpoint = provider === 'anthropic' ? '/account/claude-key' : '/account/openai-key';
-  const bodyKey = provider === 'anthropic' ? 'claudeKey' : 'openaiKey';
-
-  try {
-    await api('PUT', endpoint, { [bodyKey]: result.accessToken });
-    success(`${provider === 'anthropic' ? 'Anthropic / Claude' : 'OpenAI / Codex'} connected via subscription!`);
-    if (result.expiresIn) {
-      const days = Math.round(result.expiresIn / 86400);
-      console.log(`  Token expires in ~${days} days. Re-run this command to refresh.`);
-    }
-  } catch (err: any) {
-    error(`Failed to save token: ${err.message}`);
-    process.exit(1);
-  }
-}
-
-async function promptProvider(): Promise<string> {
-  console.log('\n  Connect a provider to use your subscription:\n');
-  console.log('  1) Anthropic / Claude  — use your Pro/Max subscription');
-  console.log('  2) OpenAI / Codex      — use your Plus/Pro/Team subscription');
-  console.log('  3) API key             — paste a VibeKit API key\n');
-
-  const choice = await readLine('  Choose (1/2/3): ');
-  if (choice === '1' || choice.toLowerCase().includes('anthropic') || choice.toLowerCase().includes('claude')) return 'anthropic';
-  if (choice === '2' || choice.toLowerCase().includes('openai') || choice.toLowerCase().includes('codex')) return 'openai';
-  if (choice === '3' || choice.toLowerCase().includes('key')) return 'key';
-  return choice;
+  error('Usage: vibekit auth [<vk_key>|status]');
+  process.exit(1);
 }
 
 function readLine(prompt: string): Promise<string> {
@@ -216,9 +170,7 @@ async function cmdAccount(): Promise<void> {
 }
 
 async function cmdTask(args: string[]): Promise<void> {
-  // Filter out --flags from args
-  const cleanArgs = args.filter(a => !a.startsWith('--'));
-  const prompt = cleanArgs.join(' ');
+  const prompt = positional(args).join(' ');
 
   if (!prompt) {
     error('Usage: vibekit task "Build a landing page with email signup"');
@@ -320,11 +272,10 @@ async function cmdTasks(): Promise<void> {
 }
 
 async function cmdSchedule(args: string[]): Promise<void> {
-  const cleanArgs = args.filter(a => !a.startsWith('--'));
-  const prompt = cleanArgs.join(' ');
+  const prompt = positional(args).join(' ');
 
   if (!prompt) {
-    error('Usage: vibekit schedule "Improve SEO" --repo owner/repo --every daily');
+    error('Usage: vibekit schedule "Improve SEO" --repo vibekit-apps/my-app --every daily');
     process.exit(1);
   }
 
@@ -332,18 +283,21 @@ async function cmdSchedule(args: string[]): Promise<void> {
   const interval = getFlag(args, '--every') || 'daily';
 
   if (!repo) {
-    error('--repo is required for scheduled tasks');
+    error('--repo is required: the repo of a project you deployed with vibekit task');
     process.exit(1);
   }
 
-  const data = await api('POST', '/schedule', { prompt, repo, interval });
+  const body: any = { prompt, repo, interval };
+  if (args.includes('--no-deploy')) body.deploy = false;
+  const data = await api('POST', '/schedule', body);
 
   if (isJson) {
     output(data);
   } else {
     success(`Schedule created: ${data.scheduleId}`);
-    console.log(`Interval: ${data.interval}`);
-    console.log(`Next run: ${data.nextRun}`);
+    console.log(`Interval: ${data.interval} (UTC)`);
+    if (data.nextRun) console.log(`Next run: ${data.nextRun}`);
+    console.log("Each run's report is posted in the project's chat in the VibeKit app.");
   }
 }
 
@@ -358,7 +312,8 @@ async function cmdSchedules(): Promise<void> {
       return;
     }
     for (const s of data.schedules) {
-      const status = s.enabled ? '✓' : '○';
+      // stateKnown is false when the server could not read the schedule's state.
+      const status = s.stateKnown === false ? '?' : s.enabled ? '✓' : '○';
       console.log(`${status} ${s.scheduleId}  ${s.interval.padEnd(12)}  ${s.name}  (${s.runCount} runs)`);
     }
   }
@@ -377,6 +332,19 @@ async function cmdUnschedule(args: string[]): Promise<void> {
 
 // ---- Helpers ----
 
+/** Flags followed by a value, which is not part of the prompt. */
+const VALUE_FLAGS = new Set(['--repo', '--branch', '--callback', '--every']);
+
+/** The prompt words: every argument except flags and the values they take. */
+function positional(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (VALUE_FLAGS.has(args[i])) i++;
+    else if (!args[i].startsWith('--')) out.push(args[i]);
+  }
+  return out;
+}
+
 function getFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   if (idx !== -1 && idx + 1 < args.length) {
@@ -387,38 +355,41 @@ function getFlag(args: string[], flag: string): string | undefined {
 
 function printHelp(): void {
   console.log(`
-vibekit — AI developer on demand
+vibekit: AI developer on demand
 
 Usage:
-  vibekit auth                      Connect provider (interactive)
-  vibekit auth login anthropic      Connect Claude subscription
-  vibekit auth login openai         Connect OpenAI subscription
-  vibekit auth <api-key>            Save VibeKit API key
-  vibekit auth status               Show connection status
+  vibekit auth                      Paste your VibeKit API key (saved to ~/.vibekit/config.json)
+  vibekit auth <vk_key>             Save a VibeKit API key
+  vibekit auth status               Show the key in use, plan and connected providers
   vibekit account                   Show plan & usage
-  vibekit task "<prompt>"           Submit a coding task
+  vibekit task "<prompt>"           Build or change a project, then deploy it
   vibekit status <task-id>          Check task status
   vibekit wait <task-id>            Wait for task to complete
   vibekit tasks                     List recent tasks
-  vibekit schedule "<prompt>"       Create recurring task
+  vibekit schedule "<prompt>"       Run a prompt on a deployed project's agent on a schedule
   vibekit schedules                 List scheduled tasks
   vibekit unschedule <id>           Cancel a schedule
 
 Flags:
   --json                 Machine-readable JSON output
-  --repo owner/name      Target GitHub repo
+  --repo owner/name      A project of yours (vibekit-apps/<name>); task makes a new one without it
   --branch name          Target branch (default: main)
-  --every interval       Schedule interval: hourly|daily|weekly
-  --callback <url>       Webhook URL for task completion
-  --no-deploy            Skip auto-deploy
+  --callback <url>       HTTPS webhook URL for task completion
+  --no-deploy            Task: commit without deploying. Schedule: runs do not deploy
+  --every interval       Schedule: hourly|daily|weekly, or a cron expression in UTC (default: daily)
 
 Examples:
   vibekit task "Build a landing page with email signup"
-  vibekit task "Fix the login bug" --repo myorg/myapp
+  vibekit task "Fix the login bug" --repo vibekit-apps/my-app
   vibekit wait task_abc123 --json
-  vibekit schedule "Improve performance" --repo myorg/app --every daily
+  vibekit schedule "Check for broken links and fix them" --repo vibekit-apps/my-app --every "0 9 * * 1"
 
-Get your API key: https://app.vibekit.bot or POST https://vibekit.bot/api/v1/auth/register
+The API key is read from VIBEKIT_API_KEY, else ~/.vibekit/config.json. There is no
+logout command: delete that file, or regenerate the key in the app, to sign out.
+Your API key: ${KEY_SETTINGS}.
+Claude or OpenAI key or subscription: ${PROVIDER_SETTINGS}.
+Schedules need a paid plan. Each run is billed like a chat message, and its report
+is posted in the project's chat.
 API docs: https://vibekit.bot/SKILL.md
 `);
 }
